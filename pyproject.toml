@@ -1,0 +1,185 @@
+# SPDX-FileCopyrightText: 2026 Mykel Alvis <mykelalvis@infrastructurebuilder.org>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "cs-image-system-azure"
+version = "0.1.7.dev1"
+description = "Azure components for cs-image-system"
+readme = "README.md"
+authors = [{ name = "Mykel Alvis", email = "mykelalvis@infrastructurebuilder.org" }]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+dependencies = [
+    "cs-image-system-contract==0.1.7.dev1",
+]
+
+[project.urls]
+Repository = "https://github.com/infrastructurebuilder/cs-image-system-azure"
+Documentation = "https://github.com/infrastructurebuilder/cs-image-system-azure/blob/develop/docs/OPERATIONS.md"
+Configuration = "https://github.com/infrastructurebuilder/cs-image-system-azure/blob/develop/docs/CONFIGURATION.md"
+
+# stage 64: `uv tool install cs-image-system` exposes only the requested package's
+# executables, and this package had none (the console script is the system package's),
+# so the install ended with "Failed to install entrypoints" -- found by the reference
+# configuration's first CI run, 2026-09-26. The same script, declared here too, names
+# the module the pinned dependency provides; both declarations point at one function.
+[project.scripts]
+cs-image-system = "cs_image_system.system.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# a metadata-only wheel: nothing to select
+bypass-selection = true
+
+[tool.hatch.build.targets.sdist]
+only-include = ["README.md", "LICENSE"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+cs-image-system-azure-runtime-plugin = { workspace = true }
+
+# The indexes a release is published to (stage 41): `uv publish --index <name>` reads the
+# publish-url and skips files already present with the same content (the url is the check
+# url). Both are explicit, so neither takes part in resolving this workspace's dependencies;
+# a consumer installs from TestPyPI with PyPI as the extra index (docs/OPERATIONS.md,
+# "Installing a release").
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple/"
+publish-url = "https://upload.pypi.org/legacy/"
+explicit = true
+
+# The one place a version changes (stage 41.4): `bump-my-version bump <part>` moves the
+# `version =` line of every package and every `== <version>` pin between them at once; the
+# release recipe then refreshes the lock, commits and tags. Scheme MAJOR.MINOR.PATCH[.devN]:
+# `bump patch` (or minor, major) opens the next version as its first development release
+# (0.1.0 -> 0.1.1.dev1), `bump dev` is the next development release of the same version
+# (0.1.1.dev1 -> 0.1.1.dev2), `bump stage` finalises it (0.1.1.dev2 -> 0.1.1). A missing
+# stage reads as final, a bumped part resets the parts after it to their first values.
+[tool.bumpversion]
+current_version = "0.1.7.dev1"
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(\\.(?P<stage>dev)(?P<dev>\\d+))?"
+serialize = ["{major}.{minor}.{patch}.{stage}{dev}", "{major}.{minor}.{patch}"]
+commit = false
+tag = false
+
+[tool.bumpversion.parts.stage]
+values = ["dev", "final"]
+optional_value = "final"
+
+[tool.bumpversion.parts.dev]
+first_value = "1"
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = "version = \"{current_version}\""
+replace = "version = \"{new_version}\""
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = "=={current_version}\""
+replace = "=={new_version}\""
+
+[[tool.bumpversion.files]]
+glob = "packages/*/pyproject.toml"
+search = "version = \"{current_version}\""
+replace = "version = \"{new_version}\""
+
+[[tool.bumpversion.files]]
+glob = "packages/*/pyproject.toml"
+glob_exclude = ["packages/contract/pyproject.toml"]     # the contract depends on no other package (stage 30)
+search = "=={current_version}\""
+replace = "=={new_version}\""
+
+[tool.pytest.ini_options]
+testpaths = ["tests",
+   "packages/azure-runtime-plugin/tests",
+   "packages/azure-state-plugin/tests",
+   ]
+pythonpath = [
+    "tests",
+    "packages/azure-runtime-plugin/src",
+    "packages/azure-state-plugin/src",
+]
+addopts = "--import-mode=importlib"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.15",
+    "pyright>=1.1.390",
+    "reuse>=6.2.0",
+    "bump-my-version>=1.2",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+extend-exclude = [".venv", "generated", "**/generated"]
+
+[tool.ruff.lint]
+# Conservative, high-signal rules: pyflakes (unused imports/vars, undefined names,
+# redefinitions) + syntax errors. Style/import-ordering rules are intentionally left
+# off for now to avoid large churn on this codebase.
+select = ["F", "E9"]
+# F841 (unused local variables) is a real backlog of ~50 across mostly untested
+# plugin code; ruff's autofix for it is "unsafe" (some RHS have side effects), so it
+# is deferred. Remove this ignore and clean up incrementally as coverage grows.
+ignore = ["F841"]
+
+[tool.pyright]
+# "basic" mode, blocking since stage 23 (0 errors is the bar), with the override
+# check on since hygiene XIX; strict typing is not enforced yet.
+# NB: "packages/*/src" matches nothing in pyright's spec globbing (it silently
+# analyzed 0 files, which also broke find-all-references); use ** instead.
+include = ["packages/**/src", "packages/**/tests", "tests"]
+exclude = ["**/.venv", "**/generated"]
+# Resolve cross-package imports of the cs_image_system namespace directly from
+# source instead of through the venv's editable-install .pth files; otherwise
+# Pylance treats them as library code and find-references/rename only sees open
+# files. Globs are not supported in extraPaths, so each src root is listed.
+extraPaths = [
+    "packages/ansible-plugin/src",
+    "packages/aws-runtime-plugin/src",
+    "packages/base/src",
+    "packages/bash-mod-plugin/src",
+    "packages/contract/src",
+    "packages/contract-example-plugin/src",
+    "packages/default-os-plugin/src",
+    "packages/docker-runtime-plugin/src",
+    "packages/tf-docker-plugin/src",
+    "packages/dummy-plugin/src",
+    "packages/gcloud-runtime-plugin/src",
+    "packages/gcs-state-plugin/src",
+    "packages/hashicorp-utils/src",
+    "packages/local-state-plugin/src",
+    "packages/posix-identity-plugin/src",
+    "packages/okta-opa-plugin/src",
+    "packages/packer-plugin/src",
+    "packages/system/src",
+    "packages/tf-ebs-instance-plugin/src",
+    "packages/tf-gcp-plugin/src",
+    "packages/tf-s3-state-plugin/src",
+]
+pythonVersion = "3.13"
+typeCheckingMode = "basic"
+reportMissingImports = "warning"
+# hygiene XIX item 1 (stage 30's finding): basic mode compares no override's
+# signature with the base's or the protocol's, so a base class could narrow or
+# widen a contract signature unnoticed. On, as an error, over the whole workspace.
+reportIncompatibleMethodOverride = "error"
+
